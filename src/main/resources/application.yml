@@ -1,5 +1,27 @@
 spring:
+  application:
+    name: shoppingmall
   datasource:
     url: jdbc:mysql://127.0.0.1:3307/shoppmingmalldb?useUnicode=true&serverTimezone=Asia/Seoul
     username: hawonoj
     password: 1234
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: never
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.example.shoppingmall: DEBUG
+    org.springframework.jdbc: DEBUG

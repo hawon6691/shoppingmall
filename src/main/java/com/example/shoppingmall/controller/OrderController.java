@@ -9,9 +9,11 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/orders")
@@ -44,6 +46,31 @@ public class OrderController {
             @RequestAttribute("userId") Long userId,
             @PathVariable Long orderId) {
         OrderResponse order = orderService.getOrderById(userId, orderId);
+        return ResponseEntity.ok(order);
+    }
+
+    @PatchMapping("/{orderId}/status")
+    @Operation(summary = "Update order status", description = "Update the status of an order (Admin only)")
+    public ResponseEntity<OrderResponse> updateOrderStatus(
+            @PathVariable Long orderId,
+            @RequestBody Map<String, String> statusUpdate) {
+
+        String newStatus = statusUpdate.get("status");
+        if (newStatus == null || newStatus.trim().isEmpty()) {
+            throw new IllegalArgumentException("Status is required");
+        }
+
+        OrderResponse order = orderService.updateOrderStatus(orderId, newStatus.toUpperCase());
+        return ResponseEntity.ok(order);
+    }
+
+    @PostMapping("/{orderId}/cancel")
+    @Operation(summary = "Cancel order", description = "Cancel a pending or confirmed order")
+    public ResponseEntity<OrderResponse> cancelOrder(
+            @RequestAttribute("userId") Long userId,
+            @PathVariable Long orderId) {
+
+        OrderResponse order = orderService.cancelOrder(userId, orderId);
         return ResponseEntity.ok(order);
     }
 }

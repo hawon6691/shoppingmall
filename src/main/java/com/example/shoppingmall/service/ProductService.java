@@ -29,6 +29,20 @@ public class ProductService {
     }
 
     @Transactional(readOnly = true)
+    public List<ProductResponse> getProductsWithPagination(int page, int size) {
+        int offset = (page - 1) * size;
+        List<Product> products = productRepository.findAllActiveWithPagination(size, offset);
+        return products.stream()
+                .map(this::mapToProductResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public int getTotalProductCount() {
+        return productRepository.countAllActive();
+    }
+
+    @Transactional(readOnly = true)
     public ProductResponse getProductById(Long id) {
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Product not found with id: " + id));

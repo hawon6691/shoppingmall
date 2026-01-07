@@ -114,6 +114,68 @@ public class OrderService {
         return mapToOrderResponse(order);
     }
 
+    @Transactional
+    public OrderResponse updateOrderStatus(Long orderId, String newStatus) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+
+        // Validate status transition
+        validateStatusTransition(order.getStatus(), newStatus);
+
+        order.setStatus(newStatus);
+        orderRepository.save(order);
+
+        return mapToOrderResponse(order);
+    }
+
+    @Transactional
+    public OrderResponse cancelOrder(Long userId, Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+
+        if (!order.getUserId().equals(userId)) {
+            throw new ResourceNotFoundException("Order does not belong to user");
+        }
+
+        // Only allow cancellation for PENDING or CONFIRMED orders
+        if (!order.getStatus().equals("PENDING") && !order.getStatus().equals("CONFIRMED")) {
+            throw new IllegalStateException("Cannot cancel order in " + order.getStatus() + " status");
+        }
+
+        // Restore product stock
+        List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
+        for (OrderItem item : orderItems) {
+            Product product = productRepository.findById(item.getProductId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Product not found"));
+            product.setStockQuantity(product.getStockQuantity() + item.getQuantity());
+            productRepository.save(product);
+        }
+
+        order.setStatus("CANCELLED");
+        orderRepository.save(order);
+
+        return mapToOrderResponse(order);
+    }
+
+    private void validateStatusTransition(String currentStatus, String newStatus) {
+        // Define valid transitions
+        if (currentStatus.equals("PENDING") && !List.of("CONFIRMED", "CANCELLED").contains(newStatus)) {
+            throw new IllegalStateException("Invalid status transition from " + currentStatus + " to " + newStatus);
+        }
+        if (currentStatus.equals("CONFIRMED") && !List.of("PROCESSING", "CANCELLED").contains(newStatus)) {
+            throw new IllegalStateException("Invalid status transition from " + currentStatus + " to " + newStatus);
+        }
+        if (currentStatus.equals("PROCESSING") && !List.of("SHIPPED").contains(newStatus)) {
+            throw new IllegalStateException("Invalid status transition from " + currentStatus + " to " + newStatus);
+        }
+        if (currentStatus.equals("SHIPPED") && !List.of("DELIVERED").contains(newStatus)) {
+            throw new IllegalStateException("Invalid status transition from " + currentStatus + " to " + newStatus);
+        }
+        if (currentStatus.equals("DELIVERED") || currentStatus.equals("CANCELLED")) {
+            throw new IllegalStateException("Cannot change status of " + currentStatus + " order");
+        }
+    }
+
     private OrderResponse mapToOrderResponse(Order order) {
         List<OrderItem> orderItems = orderItemRepository.findByOrderId(order.getId());
 

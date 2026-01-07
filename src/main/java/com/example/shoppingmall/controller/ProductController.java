@@ -8,7 +8,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/products")
@@ -19,10 +21,23 @@ public class ProductController {
     private final ProductService productService;
 
     @GetMapping
-    @Operation(summary = "Get all products", description = "Retrieve all active products")
-    public ResponseEntity<List<ProductResponse>> getAllProducts() {
-        List<ProductResponse> products = productService.getAllProducts();
-        return ResponseEntity.ok(products);
+    @Operation(summary = "Get all products", description = "Retrieve all active products with pagination")
+    public ResponseEntity<Map<String, Object>> getAllProducts(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+
+        List<ProductResponse> products = productService.getProductsWithPagination(page, size);
+        int totalCount = productService.getTotalProductCount();
+        int totalPages = (int) Math.ceil((double) totalCount / size);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("products", products);
+        response.put("currentPage", page);
+        response.put("pageSize", size);
+        response.put("totalCount", totalCount);
+        response.put("totalPages", totalPages);
+
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/{id}")

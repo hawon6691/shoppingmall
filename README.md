@@ -68,10 +68,11 @@ ShoppingMall은 **Spring Data JDBC**를 활용한 전자상거래 RESTful API입
 - ✅ JWT 기반 인증 (1시간 유효)
 
 ### 🛍️ 상품 관리
-- ✅ 전체 상품 조회 (활성 상품만)
+- ✅ 전체 상품 조회 (페이지네이션 지원)
 - ✅ 상품 상세 조회
 - ✅ 카테고리별 상품 조회
 - ✅ 상품 검색 (이름 기반)
+- ✅ 상품 평점 및 리뷰 수 표시
 
 ### 🛒 장바구니
 - ✅ 장바구니에 상품 추가
@@ -85,7 +86,16 @@ ShoppingMall은 **Spring Data JDBC**를 활용한 전자상거래 RESTful API입
 - ✅ 주문 시 재고 차감
 - ✅ 주문 내역 조회
 - ✅ 주문 상세 조회
+- ✅ 주문 상태 변경 (PENDING → CONFIRMED → PROCESSING → SHIPPED → DELIVERED)
+- ✅ 주문 취소 (재고 복원)
 - ✅ 트랜잭션 관리 (원자성 보장)
+
+### ⭐ 리뷰 시스템
+- ✅ 상품 리뷰 작성 (구매 고객만)
+- ✅ 리뷰 목록 조회 (페이지네이션)
+- ✅ 상품 평균 평점 계산
+- ✅ 리뷰 삭제 (작성자만)
+- ✅ 중복 리뷰 방지 (1주문당 1리뷰)
 
 ---
 
@@ -137,7 +147,13 @@ ShoppingMall은 **Spring Data JDBC**를 활용한 전자상거래 RESTful API입
 #### Orders & Order Items (주문)
 - 주문 정보 및 배송 정보
 - 주문 시점 상품 가격 스냅샷
-- 주문 상태 관리 (PENDING, SHIPPED, DELIVERED)
+- 주문 상태 관리 (PENDING → CONFIRMED → PROCESSING → SHIPPED → DELIVERED)
+- 주문 취소 시 재고 복원
+
+#### Reviews (리뷰)
+- 상품별 구매 후기
+- 평점 (1-5점)
+- 중복 리뷰 방지 (사용자 + 상품 + 주문 조합)
 
 ---
 
@@ -154,7 +170,7 @@ ShoppingMall은 **Spring Data JDBC**를 활용한 전자상거래 RESTful API입
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/products` | 전체 상품 조회 |
+| GET | `/api/products?page=1&size=10` | 전체 상품 조회 (페이지네이션) |
 | GET | `/api/products/{id}` | 상품 상세 조회 |
 | GET | `/api/products/category/{categoryId}` | 카테고리별 조회 |
 | GET | `/api/products/search?keyword={keyword}` | 상품 검색 |
@@ -175,6 +191,18 @@ ShoppingMall은 **Spring Data JDBC**를 활용한 전자상거래 RESTful API입
 | POST | `/api/orders` | 주문 생성 |
 | GET | `/api/orders` | 주문 내역 조회 |
 | GET | `/api/orders/{id}` | 주문 상세 조회 |
+| PATCH | `/api/orders/{id}/status` | 주문 상태 변경 (관리자) |
+| POST | `/api/orders/{id}/cancel` | 주문 취소 |
+
+### ⭐ 리뷰 API
+
+| Method | Endpoint | Description | 인증 |
+|--------|----------|-------------|------|
+| POST | `/api/reviews` | 리뷰 작성 | 필요 |
+| GET | `/api/reviews/product/{productId}?page=1&size=10` | 상품 리뷰 목록 | - |
+| GET | `/api/reviews/product/{productId}/stats` | 리뷰 통계 (평점, 개수) | - |
+| GET | `/api/reviews/my-reviews` | 내 리뷰 목록 | 필요 |
+| DELETE | `/api/reviews/{id}` | 리뷰 삭제 | 필요 |
 
 **API 문서**: http://localhost:8080/swagger-ui.html
 
@@ -215,33 +243,155 @@ docker-compose up -d
 JPA 대신 SQL 중심의 명확한 쿼리 제어를 위해 Spring Data JDBC 사용
 
 ```java
-@Query("SELECT * FROM products WHERE name LIKE CONCAT('%', :keyword, '%')")
-List<Product> searchByName(@Param("keyword") String keyword);
+@Repository
+public interface ProductRepository extends CrudRepository<Product, Long> {
+
+    @Query("SELECT * FROM products WHERE name LIKE CONCAT('%', :keyword, '%') AND is_active = true")
+    List<Product> searchByName(@Param("keyword") String keyword);
+
+    @Query("SELECT * FROM products WHERE is_active = true ORDER BY id DESC LIMIT :limit OFFSET :offset")
+    List<Product> findAllActiveWithPagination(@Param("limit") int limit, @Param("offset") int offset);
+}
 ```
 
 ### 2. JWT 인증
 
 HS256 알고리즘 기반 JWT 토큰 생성 및 검증
 
+```java
+public String generateToken(String userId) {
+    return Jwts.builder()
+            .setSubject(userId)
+            .setIssuedAt(new Date())
+            .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+            .signWith(getSigningKey(), SignatureAlgorithm.HS256)
+            .compact();
+}
+```
+
 ### 3. 트랜잭션 관리
 
 주문 생성 시 재고 차감, 주문 아이템 생성, 장바구니 비우기를 하나의 트랜잭션으로 처리
 
-### 4. 예외 처리
+```java
+@Transactional
+public OrderResponse createOrder(Long userId, OrderRequest request) {
+    // 1. 장바구니 조회
+    Cart cart = cartRepository.findByUserId(userId)
+            .orElseThrow(() -> new ResourceNotFoundException("Cart not found"));
+
+    // 2. 재고 검증
+    for (CartItem item : cartItems) {
+        if (product.getStockQuantity() < item.getQuantity()) {
+            throw new InsufficientStockException("재고 부족");
+        }
+    }
+
+    // 3. 주문 생성 및 재고 차감
+    Order order = orderRepository.save(newOrder);
+
+    // 4. 장바구니 비우기
+    cartItemRepository.deleteByCartId(cart.getId());
+
+    return orderResponse;
+}
+```
+
+### 4. 주문 상태 전환 검증
+
+상태 머신 패턴을 통한 유효한 주문 상태 전환만 허용
+
+```java
+private void validateStatusTransition(String currentStatus, String newStatus) {
+    // PENDING → CONFIRMED, CANCELLED
+    if (currentStatus.equals("PENDING") &&
+        !List.of("CONFIRMED", "CANCELLED").contains(newStatus)) {
+        throw new IllegalStateException("Invalid status transition");
+    }
+    // CONFIRMED → PROCESSING, CANCELLED
+    // PROCESSING → SHIPPED
+    // SHIPPED → DELIVERED
+}
+```
+
+### 5. 리뷰 중복 방지
+
+사용자가 동일 주문의 동일 상품에 대해 중복 리뷰 작성 불가
+
+```java
+@Transactional
+public ReviewResponse createReview(Long userId, ReviewRequest request) {
+    // 중복 리뷰 체크
+    reviewRepository.findByUserIdAndProductIdAndOrderId(
+        userId, request.getProductId(), request.getOrderId()
+    ).ifPresent(r -> {
+        throw new DuplicateReviewException("이미 리뷰를 작성했습니다");
+    });
+
+    // 구매 검증 (주문이 사용자의 것인지)
+    Order order = orderRepository.findById(request.getOrderId())
+            .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+
+    if (!order.getUserId().equals(userId)) {
+        throw new UnauthorizedException("본인 주문만 리뷰 작성 가능");
+    }
+
+    return reviewRepository.save(review);
+}
+```
+
+### 6. 페이지네이션 구현
+
+대용량 데이터 효율적 처리를 위한 LIMIT/OFFSET 기반 페이지네이션
+
+```java
+@GetMapping
+public ResponseEntity<Map<String, Object>> getAllProducts(
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "10") int size) {
+
+    List<ProductResponse> products = productService.getProductsWithPagination(page, size);
+    int totalCount = productService.getTotalProductCount();
+    int totalPages = (int) Math.ceil((double) totalCount / size);
+
+    Map<String, Object> response = new HashMap<>();
+    response.put("products", products);
+    response.put("totalPages", totalPages);
+
+    return ResponseEntity.ok(response);
+}
+```
+
+### 7. 예외 처리
 
 Global Exception Handler로 일관된 에러 응답 제공
+
+```java
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleResourceNotFound(ResourceNotFoundException ex) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("timestamp", LocalDateTime.now());
+        response.put("status", HttpStatus.NOT_FOUND.value());
+        response.put("message", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+}
+```
 
 ---
 
 ## 향후 계획
 
 - [ ] Refresh Token 구현
-- [ ] 페이지네이션 및 정렬
-- [ ] Redis 캐싱
-- [ ] 이미지 업로드
+- [ ] Redis 캐싱 (상품 정보, 리뷰 통계)
+- [ ] 이미지 업로드 (S3 연동)
 - [ ] 결제 시스템 연동
 - [ ] 관리자 페이지
+- [ ] 상품 재입고 알림
 
 ---
 
-**Last Updated:** 2025-01-07
+**Last Updated:** 2025-01-08
